@@ -1,0 +1,107 @@
+package com.szabodev.example.spring.product.store.microservice.service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.szabodev.example.spring.product.store.microservice.config.JmsConfig;
+import com.szabodev.example.spring.product.store.microservice.dto.DeletedOrderDTO;
+import com.szabodev.example.spring.product.store.microservice.dto.OrderRequestDTO;
+import com.szabodev.example.spring.product.store.microservice.dto.OrderResponseDTO;
+import com.szabodev.example.spring.product.store.microservice.dto.ProductDemandDTO;
+import com.szabodev.example.spring.product.store.microservice.model.ProductStock;
+import com.szabodev.example.spring.product.store.microservice.repository.ProductStockRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.jms.annotation.EnableJms;
+import org.springframework.jms.annotation.JmsListener;
+import org.springframework.jms.core.JmsTemplate;
+import org.springframework.stereotype.Component;
+
+import javax.jms.JMSException;
+import javax.jms.Message;
+import javax.jms.TextMessage;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+
+@RequiredArgsConstructor
+@Component
+@Slf4j
+@EnableJms
+public class MessageListener {
+
+    private final ObjectMapper objectMapper;
+    private final ProductStockRepository productStockRepository;
+    private final JmsTemplate jmsTemplate;
+
+    @JmsListener(destination = "product-demand-queue")
+    public void demandListener(Message message) throws JMSException {
+        if (message instanceof TextMessage) {
+            TextMessage textMessage = (TextMessage) message;
+            try {
+                ProductDemandDTO productDemand = objectMapper.readValue(textMessage.getText(), ProductDemandDTO.class);
+                Optional<ProductStock> productStock = productStockRepository.findByProductId(productDemand.getProductId());
+                if (productStock.isPresent()) {
+                    productStock.get().setRequiredAmount(productDemand.getRequiredAmount());
+                    productStockRepository.save(productStock.get());
+                } else {
+                    ProductStock newStock = ProductStock.builder()
+                            .productId(productDemand.getProductId())
+                            .requiredAmount(productDemand.getRequiredAmount())
+                            .build();
+                    productStockRepository.save(newStock);
+                }
+            } catch (JsonProcessingException e) {
+                System.out.println("MessageListener - Cannot convert to object: " + textMessage.getText());
+            }
+        }
+    }
+
+    @JmsListener(destination = "order-request-queue")
+    public void orderListener(Message message) throws JMSException {
+        log.info("Handling order. Message: {}", message);
+        AtomicReference<String> status = new AtomicReference<>("NOK");
+        TextMessage textMessage = (TextMessage) message;
+        try {
+            OrderRequestDTO orderRequest = objectMapper.readValue(textMessage.getText(), OrderRequestDTO.class);
+            productStockRepository.findByProductId(orderRequest.getProductId()).ifPresent(productStock -> {
+                log.info("Stock found");
+                if (productStock.getAvailable() != null && productStock.getAvailable() >= orderRequest.getAmount()) {
+                    productStock.setAvailable(productStock.getAvailable() - orderRequest.getAmount());
+                    productStockRepository.save(productStock);
+                    status.set("OK");
+                    log.info("Amount available");
+                } else {
+                    log.info("Amount not available");
+                }
+            });
+        } catch (JsonProcessingException e) {
+            System.out.println("MessageListener - Cannot convert to object: " + textMessage.getText());
+        }
+        OrderResponseDTO replyMessage = OrderResponseDTO.builder().status(status.get()).build();
+        jmsTemplate.convertAndSend("order-request-queue", replyMessage);
+        log.info("Reply message sent: {}", message);
+    }
+
+    @JmsListener(destination = "order-deleted-queue")
+    public void deletedOrderListener(Message message) throws JMSException {
+        log.info("Handling deleted order info. Message: {}", message);
+        TextMessage textMessage = (TextMessage) message;
+        try {
+            DeletedOrderDTO deletedOrder = objectMapper.readValue(textMessage.getText(), DeletedOrderDTO.class);
+            Optional<ProductStock> productOpt = productStockRepository.findByProductId(deletedOrder.getProductId());
+            if (productOpt.isPresent()) {
+                Integer available = productOpt.get().getAvailable();
+                productOpt.get().setAvailable(available != null ? available + deletedOrder.getAmount() : deletedOrder.getAmount());
+                productStockRepository.save(productOpt.get());
+            } else {
+                ProductStock newStock = ProductStock.builder()
+                        .productId(deletedOrder.getProductId())
+                        .available(deletedOrder.getAmount())
+                        .build();
+                log.info("Product stock not found, saving new: {}", newStock);
+                productStockRepository.save(newStock);
+            }
+        } catch (JsonProcessingException e) {
+            System.out.println("MessageListener - Cannot convert to object: " + textMessage.getText());
+        }
+    }
+}

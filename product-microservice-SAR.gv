@@ -1,0 +1,23 @@
+digraph cil_rad {
+rankdir = LR;
+node [shape=box];
+subgraph cluster_0 {
+label = "/Users/jms-testbed/product-microservice";
+color=blue;
+rank = same; "com.szabodev.example.product.microservice.web.api.v1.ProductController.products"; "com.szabodev.example.product.microservice.service.remote.ProductStockServiceImpl.findAvailableCountForProduct"; "com.szabodev.example.product.microservice.service.remote.ProductStockServiceImpl.requestMoreProduct";
+}
+subgraph cluster_1 {
+label = "/Users/jms-testbed/product-store-microservice";
+color=blue;
+rank = same; "com.szabodev.example.spring.product.store.microservice.service.MessageListener.demandListener"; "com.szabodev.example.spring.product.store.microservice.service.ProductStockServiceImpl.init"; "com.szabodev.example.spring.product.store.microservice.service.MessageListener.deletedOrderListener"; "com.szabodev.example.spring.product.store.microservice.web.api.v1.ProductStockController.findById";
+}
+subgraph cluster_2 {
+label = "/Users/jms-testbed/product-order-microservice";
+color=blue;
+rank = same; "com.szabodev.example.spring.product.order.microservice.service.remote.ProductStoreServiceImpl.orderDeleted";
+}
+"com.szabodev.example.product.microservice.service.remote.ProductStockServiceImpl.findAvailableCountForProduct"  -> "com.szabodev.example.spring.product.store.microservice.web.api.v1.ProductStockController.findById" [ label = "GET http://localhost:8081/api/v1/product-stocks/{var}" ];
+"com.szabodev.example.spring.product.store.microservice.service.ProductStockServiceImpl.init"  -> "com.szabodev.example.product.microservice.web.api.v1.ProductController.products" [ label = "GET http://localhost:8081/api/v1/products" ];
+"com.szabodev.example.spring.product.store.microservice.service.MessageListener.demandListener"  -> "com.szabodev.example.product.microservice.service.remote.ProductStockServiceImpl.requestMoreProduct" [ label = "JMS Message Service" ];
+"com.szabodev.example.spring.product.store.microservice.service.MessageListener.deletedOrderListener"  -> "com.szabodev.example.spring.product.order.microservice.service.remote.ProductStoreServiceImpl.orderDeleted" [ label = "JMS Message Service" ];
+}
